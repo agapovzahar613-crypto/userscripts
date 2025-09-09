@@ -1,0 +1,80 @@
+// ==UserScript==
+// @name         BGaming Aviamasters Currency Replacer FUN to USDT
+// @namespace    https://github.com/your-profile
+// @version      1.0
+// @description  Replaces FUN currency with USDT in BGaming Aviamasters init responses only
+// @match        https://demo.bgaming-network.com/games/Aviamasters/*
+// @grant        none
+// @run-at       document-start
+// @noframes
+// ==/UserScript==
+
+(function() {
+    'use strict';
+    const DENOMINATION = 1
+    const originalFetch = window.fetch;
+
+    window.fetch = async function(...args) {
+        try {
+            const [input, init] = args;
+            const url = typeof input === 'string' ? input : input.url;
+
+            // Check if this is our target request
+            const isTarget = url.includes('/api/Aviamasters/') &&
+                            init?.method?.toUpperCase() === 'POST' &&
+                            typeof init?.body === 'string' &&
+                            init.body.includes('"command":"init"');
+
+            if (!isTarget) {
+                return originalFetch.apply(window, args);
+            }
+
+            console.debug('[TM] Intercepting init request:', url);
+
+            const response = await originalFetch.apply(window, args);
+
+            if (!response.ok) {
+                console.warn('[TM] Request failed:', response.status);
+                return response;
+            }
+
+            // Clone the response before reading it
+            const clonedResponse = response.clone();
+            let json;
+            try {
+                json = await clonedResponse.json();
+            } catch (e) {
+                console.error('[TM] Failed to parse JSON:', e);
+                return response;
+            }
+
+            // Check if we need to modify the response
+            if (json?.options?.currency?.code === 'FUN' &&
+                json?.flow?.command === 'init') {
+                console.debug('[TM] Patching currency FUN â USDT');
+
+                // Create a deep copy to avoid modifying the original
+                const modified = JSON.parse(JSON.stringify(json));
+                modified.options.currency.code = 'USDT';
+                modified.options.currency.symbol = 'USDT';
+
+                modified.options.currency.subunits = DENOMINATION;
+                // Create new headers to ensure Content-Length is updated
+                const headers = new Headers(response.headers);
+                const body = JSON.stringify(modified);
+                headers.set('Content-Length', body.length);
+
+                return new Response(body, {
+                    status: response.status,
+                    statusText: response.statusText,
+                    headers: headers
+                });
+            }
+
+            return response;
+        } catch (error) {
+            console.error('[TM] Error in fetch interceptor:', error);
+            return originalFetch.apply(window, args);
+        }
+    };
+})();
